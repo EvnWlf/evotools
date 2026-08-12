@@ -3,6 +3,7 @@
 import React, { useState, useRef, useEffect, useCallback } from 'react';
 import * as THREE from 'three';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
+import { TransformControls } from 'three/examples/jsm/controls/TransformControls.js';
 import { STLLoader } from 'three/examples/jsm/loaders/STLLoader.js';
 import { OBJLoader } from 'three/examples/jsm/loaders/OBJLoader.js';
 import { PLYLoader } from 'three/examples/jsm/loaders/PLYLoader.js';
@@ -24,6 +25,11 @@ import {
   Moon,
   Compass,
   ShieldCheck,
+  Move,
+  Maximize2,
+  Play,
+  Pause,
+  Rotate3d,
 } from 'lucide-react';
 
 declare global {
@@ -33,11 +39,16 @@ declare global {
 }
 
 type ThemeMode = 'light' | 'dark';
+type TransformMode = 'translate' | 'rotate' | 'scale' | 'none';
+type ViewAxis = 'iso' | 'top' | 'front' | 'side';
 
 export default function CADConverterPage() {
   const containerRef = useRef<HTMLDivElement>(null);
   const sceneRef = useRef<THREE.Scene | null>(null);
+  const cameraRef = useRef<THREE.PerspectiveCamera | null>(null);
   const rendererRef = useRef<THREE.WebGLRenderer | null>(null);
+  const controlsRef = useRef<OrbitControls | null>(null);
+  const transformControlsRef = useRef<TransformControls | null>(null);
   const gridHelperRef = useRef<THREE.GridHelper | null>(null);
   const currentMeshRef = useRef<THREE.Object3D | null>(null);
   const occtInstanceRef = useRef<any>(null);
@@ -51,6 +62,8 @@ export default function CADConverterPage() {
   const [errorMessage, setErrorMessage] = useState<string>('');
   const [glbBlob, setGlbBlob] = useState<Blob | null>(null);
   const [wireframe, setWireframe] = useState<boolean>(false);
+  const [transformMode, setTransformMode] = useState<TransformMode>('none');
+  const [autoRotate, setAutoRotate] = useState<boolean>(false);
 
   // Detect and listen to OS color scheme
   useEffect(() => {
@@ -78,6 +91,7 @@ export default function CADConverterPage() {
 
     const camera = new THREE.PerspectiveCamera(45, width / height, 0.1, 2000);
     camera.position.set(100, 100, 100);
+    cameraRef.current = camera;
 
     const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
     renderer.setSize(width, height);
@@ -88,10 +102,23 @@ export default function CADConverterPage() {
 
     container.appendChild(renderer.domElement);
 
-    const controls = new OrbitControls(camera, renderer.domElement);
-    controls.enableDamping = true;
-    controls.dampingFactor = 0.05;
+    const orbitControls = new OrbitControls(camera, renderer.domElement);
+    orbitControls.enableDamping = true;
+    orbitControls.dampingFactor = 0.05;
+    orbitControls.autoRotateSpeed = 2.0;
+    controlsRef.current = orbitControls;
 
+    // Transform Controls (Gizmo)
+    const transformControls = new TransformControls(camera, renderer.domElement);
+    transformControls.size = 0.75;
+    transformControls.visible = false;
+    transformControls.addEventListener('dragging-changed', (event) => {
+      orbitControls.enabled = !event.value;
+    });
+    scene.add(transformControls);
+    transformControlsRef.current = transformControls;
+
+    // Lighting Configuration
     const ambientLight = new THREE.AmbientLight(0xffffff, 1.4);
     scene.add(ambientLight);
 
@@ -106,7 +133,7 @@ export default function CADConverterPage() {
     let animationId: number;
     const animate = () => {
       animationId = requestAnimationFrame(animate);
-      controls.update();
+      orbitControls.update();
       renderer.render(scene, camera);
     };
     animate();
@@ -125,6 +152,7 @@ export default function CADConverterPage() {
     return () => {
       window.removeEventListener('resize', handleResize);
       cancelAnimationFrame(animationId);
+      transformControls.dispose();
       renderer.dispose();
       if (container && renderer.domElement) {
         container.removeChild(renderer.domElement);
@@ -132,12 +160,31 @@ export default function CADConverterPage() {
     };
   }, []);
 
+  // Update OrbitControls autoRotate state
+  useEffect(() => {
+    if (controlsRef.current) {
+      controlsRef.current.autoRotate = autoRotate;
+    }
+  }, [autoRotate]);
+
+  // Synchronize TransformControls Mode
+  useEffect(() => {
+    if (!transformControlsRef.current) return;
+    if (transformMode === 'none' || !currentMeshRef.current) {
+      transformControlsRef.current.detach();
+      transformControlsRef.current.visible = false;
+    } else {
+      transformControlsRef.current.visible = true;
+      transformControlsRef.current.attach(currentMeshRef.current);
+      transformControlsRef.current.setMode(transformMode);
+    }
+  }, [transformMode]);
+
   // Dynamically update viewport colors on theme change
   useEffect(() => {
     if (!sceneRef.current) return;
 
     const isDark = theme === 'dark';
-
     sceneRef.current.background = new THREE.Color(isDark ? 0x090d16 : 0xf8fafc);
 
     if (gridHelperRef.current) {
@@ -157,7 +204,7 @@ export default function CADConverterPage() {
   }, [theme]);
 
   const fitCameraToObject = useCallback((object: THREE.Object3D) => {
-    if (!sceneRef.current) return;
+    if (!sceneRef.current || !cameraRef.current || !controlsRef.current) return;
     const box = new THREE.Box3().setFromObject(object);
     const center = box.getCenter(new THREE.Vector3());
     const size = box.getSize(new THREE.Vector3());
@@ -169,7 +216,34 @@ export default function CADConverterPage() {
     const scaledBox = new THREE.Box3().setFromObject(object);
     scaledBox.getCenter(center);
     object.position.sub(center);
+
+    cameraRef.current.position.set(100, 100, 100);
+    controlsRef.current.target.set(0, 0, 0);
+    controlsRef.current.update();
   }, []);
+
+  const changeView = (axis: ViewAxis) => {
+    if (!cameraRef.current || !controlsRef.current) return;
+    const dist = 140;
+
+    switch (axis) {
+      case 'iso':
+        cameraRef.current.position.set(100, 100, 100);
+        break;
+      case 'top':
+        cameraRef.current.position.set(0, dist, 0);
+        break;
+      case 'front':
+        cameraRef.current.position.set(0, 0, dist);
+        break;
+      case 'side':
+        cameraRef.current.position.set(dist, 0, 0);
+        break;
+    }
+
+    controlsRef.current.target.set(0, 0, 0);
+    controlsRef.current.update();
+  };
 
   const handleManualDownload = () => {
     if (!glbBlob || !fileName) return;
@@ -227,6 +301,10 @@ export default function CADConverterPage() {
 
     try {
       if (!sceneRef.current) throw new Error('3D Viewport is not initialized.');
+
+      if (transformControlsRef.current) {
+        transformControlsRef.current.detach();
+      }
 
       if (currentMeshRef.current) {
         sceneRef.current.remove(currentMeshRef.current);
@@ -323,6 +401,10 @@ export default function CADConverterPage() {
       sceneRef.current.add(loadedObject);
       currentMeshRef.current = loadedObject;
       fitCameraToObject(loadedObject);
+
+      if (transformMode !== 'none' && transformControlsRef.current) {
+        transformControlsRef.current.attach(loadedObject);
+      }
 
       setStatusDetail('Packaging binary glTF (.glb)...');
       const exporter = new GLTFExporter();
@@ -421,7 +503,7 @@ export default function CADConverterPage() {
         <div ref={containerRef} className="w-full h-full cursor-grab active:cursor-grabbing" />
       </div>
 
-      {/* Control Panel */}
+      {/* Control Panel (Left Sidebar) */}
       <div className="absolute top-4 left-4 z-10 w-88 flex flex-col gap-3 pointer-events-auto">
         <div
           className={`backdrop-blur-xl border rounded-2xl p-5 shadow-2xl transition-all duration-200 ${
@@ -543,7 +625,7 @@ export default function CADConverterPage() {
             </button>
           )}
 
-          {/* Wireframe Viewport Toggle */}
+          {/* Wireframe Toggle */}
           <div className="mt-3 pt-3 border-t border-slate-200/10 dark:border-slate-800 flex items-center justify-between">
             <span className="text-[11px] opacity-70 flex items-center gap-1.5">
               <Layers className="w-3.5 h-3.5 text-sky-500" />
@@ -575,6 +657,123 @@ export default function CADConverterPage() {
         >
           <ShieldCheck className="w-3.5 h-3.5 text-emerald-500 shrink-0" />
           <span>Zero Server Uploads. Processed 100% in local memory.</span>
+        </div>
+      </div>
+
+      {/* 3D Transform Gizmo & Camera Tools Toolbar (Top Right) */}
+      <div className="absolute top-4 right-4 z-10 flex flex-col items-end gap-2 pointer-events-auto">
+        {/* Gizmo Controls */}
+        <div
+          className={`backdrop-blur-xl border rounded-2xl p-2 flex items-center gap-1.5 shadow-xl transition-all ${
+            isDark ? 'bg-slate-900/90 border-slate-800' : 'bg-white/90 border-slate-200'
+          }`}
+        >
+          <span className="text-[10px] uppercase font-mono px-2 opacity-50 font-bold">Gizmo:</span>
+          
+          <button
+            onClick={() => setTransformMode((prev) => (prev === 'translate' ? 'none' : 'translate'))}
+            disabled={!currentMeshRef.current}
+            title="Translate / Move Object"
+            className={`p-2 rounded-xl text-xs flex items-center gap-1.5 transition-all disabled:opacity-30 cursor-pointer ${
+              transformMode === 'translate'
+                ? 'bg-sky-600 text-white shadow-md'
+                : isDark
+                ? 'text-slate-300 hover:bg-slate-800'
+                : 'text-slate-700 hover:bg-slate-100'
+            }`}
+          >
+            <Move className="w-3.5 h-3.5" />
+            <span className="text-[11px] font-medium hidden sm:inline">Move</span>
+          </button>
+
+          <button
+            onClick={() => setTransformMode((prev) => (prev === 'rotate' ? 'none' : 'rotate'))}
+            disabled={!currentMeshRef.current}
+            title="Rotate Object"
+            className={`p-2 rounded-xl text-xs flex items-center gap-1.5 transition-all disabled:opacity-30 cursor-pointer ${
+              transformMode === 'rotate'
+                ? 'bg-sky-600 text-white shadow-md'
+                : isDark
+                ? 'text-slate-300 hover:bg-slate-800'
+                : 'text-slate-700 hover:bg-slate-100'
+            }`}
+          >
+            <Rotate3d className="w-3.5 h-3.5" />
+            <span className="text-[11px] font-medium hidden sm:inline">Rotate</span>
+          </button>
+
+          <button
+            onClick={() => setTransformMode((prev) => (prev === 'scale' ? 'none' : 'scale'))}
+            disabled={!currentMeshRef.current}
+            title="Scale Object"
+            className={`p-2 rounded-xl text-xs flex items-center gap-1.5 transition-all disabled:opacity-30 cursor-pointer ${
+              transformMode === 'scale'
+                ? 'bg-sky-600 text-white shadow-md'
+                : isDark
+                ? 'text-slate-300 hover:bg-slate-800'
+                : 'text-slate-700 hover:bg-slate-100'
+            }`}
+          >
+            <Maximize2 className="w-3.5 h-3.5" />
+            <span className="text-[11px] font-medium hidden sm:inline">Scale</span>
+          </button>
+        </div>
+
+        {/* Camera Views & Auto-Rotate Controls */}
+        <div
+          className={`backdrop-blur-xl border rounded-2xl p-2 flex items-center gap-1 shadow-xl transition-all ${
+            isDark ? 'bg-slate-900/90 border-slate-800' : 'bg-white/90 border-slate-200'
+          }`}
+        >
+          <button
+            onClick={() => setAutoRotate((prev) => !prev)}
+            title="Auto-Rotate Camera"
+            className={`p-2 rounded-xl text-xs flex items-center gap-1.5 transition-all cursor-pointer ${
+              autoRotate
+                ? 'bg-emerald-600 text-white shadow-md'
+                : isDark
+                ? 'text-slate-300 hover:bg-slate-800'
+                : 'text-slate-700 hover:bg-slate-100'
+            }`}
+          >
+            {autoRotate ? <Pause className="w-3.5 h-3.5" /> : <Play className="w-3.5 h-3.5" />}
+            <span className="text-[11px] font-medium hidden sm:inline">Auto-Spin</span>
+          </button>
+
+          <div className="w-[1px] h-4 bg-slate-300 dark:bg-slate-800 mx-1" />
+
+          <button
+            onClick={() => changeView('iso')}
+            className={`px-2.5 py-1.5 rounded-lg text-[10px] font-mono font-medium transition-all cursor-pointer ${
+              isDark ? 'text-slate-300 hover:bg-slate-800' : 'text-slate-700 hover:bg-slate-100'
+            }`}
+          >
+            ISO
+          </button>
+          <button
+            onClick={() => changeView('top')}
+            className={`px-2.5 py-1.5 rounded-lg text-[10px] font-mono font-medium transition-all cursor-pointer ${
+              isDark ? 'text-slate-300 hover:bg-slate-800' : 'text-slate-700 hover:bg-slate-100'
+            }`}
+          >
+            TOP
+          </button>
+          <button
+            onClick={() => changeView('front')}
+            className={`px-2.5 py-1.5 rounded-lg text-[10px] font-mono font-medium transition-all cursor-pointer ${
+              isDark ? 'text-slate-300 hover:bg-slate-800' : 'text-slate-700 hover:bg-slate-100'
+            }`}
+          >
+            FRONT
+          </button>
+          <button
+            onClick={() => changeView('side')}
+            className={`px-2.5 py-1.5 rounded-lg text-[10px] font-mono font-medium transition-all cursor-pointer ${
+              isDark ? 'text-slate-300 hover:bg-slate-800' : 'text-slate-700 hover:bg-slate-100'
+            }`}
+          >
+            SIDE
+          </button>
         </div>
       </div>
 
