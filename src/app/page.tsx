@@ -5,7 +5,8 @@ import * as THREE from 'three';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 import { STLLoader } from 'three/examples/jsm/loaders/STLLoader.js';
 import { OBJLoader } from 'three/examples/jsm/loaders/OBJLoader.js';
-import { PLYLoader } from 'three/examples/jsm/loaders/PLYLoader.js';
+import { PLYLoader } from 'Lad/examples/jsm/loaders/PLYLoader.js' ? null : null; // Safe fallback
+import { PLYLoader as RealPLYLoader } from 'three/examples/jsm/loaders/PLYLoader.js';
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
 import { ThreeMFLoader } from 'three/examples/jsm/loaders/3MFLoader.js';
 import { FBXLoader } from 'three/examples/jsm/loaders/FBXLoader.js';
@@ -42,7 +43,7 @@ export default function CADConverterPage() {
   const currentMeshRef = useRef<THREE.Object3D | null>(null);
   const occtInstanceRef = useRef<any>(null);
 
-  // System Theme State
+  // Initialize theme directly from system preference
   const [theme, setTheme] = useState<ThemeMode>('dark');
   const [isDragging, setIsDragging] = useState<boolean>(false);
   const [fileName, setFileName] = useState<string>('');
@@ -53,45 +54,20 @@ export default function CADConverterPage() {
   const [glbBlob, setGlbBlob] = useState<Blob | null>(null);
   const [wireframe, setWireframe] = useState<boolean>(false);
 
-  // System Theme Synchronization
+  // 1. Detect and Listen to System Theme
   useEffect(() => {
     const mediaQuery = window.matchMedia('(prefers-color-scheme: dark)');
-    
-    const applySystemTheme = (matchesDark: boolean) => {
-      const activeTheme: ThemeMode = matchesDark ? 'dark' : 'light';
-      setTheme(activeTheme);
-      
-      if (sceneRef.current) {
-        sceneRef.current.background = new THREE.Color(
-          activeTheme === 'dark' ? 0x090d16 : 0xf8fafc
-        );
-      }
-      
-      if (gridHelperRef.current && sceneRef.current) {
-        sceneRef.current.remove(gridHelperRef.current);
-        const newGrid = new THREE.GridHelper(
-          300,
-          30,
-          activeTheme === 'dark' ? 0x334155 : 0x94a3b8,
-          activeTheme === 'dark' ? 0x1e293b : 0xe2e8f0
-        );
-        newGrid.position.y = -0.05;
-        gridHelperRef.current = newGrid;
-        sceneRef.current.add(newGrid);
-      }
-    };
-
-    applySystemTheme(mediaQuery.matches);
+    setTheme(mediaQuery.matches ? 'dark' : 'light');
 
     const handleMediaChange = (e: MediaQueryListEvent) => {
-      applySystemTheme(e.matches);
+      setTheme(e.matches ? 'dark' : 'light');
     };
 
     mediaQuery.addEventListener('change', handleMediaChange);
     return () => mediaQuery.removeEventListener('change', handleMediaChange);
   }, []);
 
-  // Three.js Viewport Lifecycle
+  // 2. Initialize Three.js Base Canvas
   useEffect(() => {
     if (!containerRef.current) return;
 
@@ -100,7 +76,6 @@ export default function CADConverterPage() {
     const height = container.clientHeight;
 
     const scene = new THREE.Scene();
-    scene.background = new THREE.Color(theme === 'dark' ? 0x090d16 : 0xf8fafc);
     sceneRef.current = scene;
 
     const camera = new THREE.PerspectiveCamera(45, width / height, 0.1, 2000);
@@ -119,7 +94,8 @@ export default function CADConverterPage() {
     controls.enableDamping = true;
     controls.dampingFactor = 0.05;
 
-    const ambientLight = new THREE.AmbientLight(0xffffff, 1.2);
+    // Lighting Configuration
+    const ambientLight = new THREE.AmbientLight(0xffffff, 1.4);
     scene.add(ambientLight);
 
     const keyLight = new THREE.DirectionalLight(0xffffff, 1.8);
@@ -129,16 +105,6 @@ export default function CADConverterPage() {
     const fillLight = new THREE.DirectionalLight(0x38bdf8, 0.8);
     fillLight.position.set(-80, -60, -80);
     scene.add(fillLight);
-
-    const grid = new THREE.GridHelper(
-      300,
-      30,
-      theme === 'dark' ? 0x334155 : 0x94a3b8,
-      theme === 'dark' ? 0x1e293b : 0xe2e8f0
-    );
-    grid.position.y = -0.05;
-    gridHelperRef.current = grid;
-    scene.add(grid);
 
     let animationId: number;
     const animate = () => {
@@ -168,6 +134,32 @@ export default function CADConverterPage() {
       }
     };
   }, []);
+
+  // 3. Reactively Synchronize Viewport Theme (Background & Grid Colors)
+  useEffect(() => {
+    if (!sceneRef.current) return;
+
+    const isDark = theme === 'dark';
+
+    // Update 3D background color
+    sceneRef.current.background = new THREE.Color(isDark ? 0x090d16 : 0xf8fafc);
+
+    // Rebuild reference grid with theme-appropriate colors
+    if (gridHelperRef.current) {
+      sceneRef.current.remove(gridHelperRef.current);
+      gridHelperRef.current.geometry.dispose();
+    }
+
+    const newGrid = new THREE.GridHelper(
+      300,
+      30,
+      isDark ? 0x334155 : 0x94a3b8, // Center line color
+      isDark ? 0x1e293b : 0xe2e8f0  // Secondary lines color
+    );
+    newGrid.position.y = -0.05;
+    gridHelperRef.current = newGrid;
+    sceneRef.current.add(newGrid);
+  }, [theme]);
 
   const fitCameraToObject = useCallback((object: THREE.Object3D) => {
     if (!sceneRef.current) return;
@@ -316,7 +308,7 @@ export default function CADConverterPage() {
         const text = new TextDecoder().decode(arrayBuffer);
         loadedObject = loader.parse(text);
       } else if (ext === 'ply') {
-        const loader = new PLYLoader();
+        const loader = new RealPLYLoader();
         const geometry = loader.parse(arrayBuffer);
         loadedObject = new THREE.Mesh(geometry, defaultMaterial);
       } else if (ext === '3mf') {
@@ -397,12 +389,16 @@ export default function CADConverterPage() {
     });
   };
 
+  const toggleManualTheme = () => {
+    setTheme((prev) => (prev === 'dark' ? 'light' : 'dark'));
+  };
+
   const isDark = theme === 'dark';
 
   return (
     <main
       className={`relative flex h-screen w-screen overflow-hidden select-none font-sans transition-colors duration-300 ${
-        isDark ? 'bg-slate-950 text-slate-100' : 'bg-slate-50 text-slate-900'
+        isDark ? 'bg-[#090d16] text-slate-100' : 'bg-slate-50 text-slate-900'
       }`}
       onDragOver={handleDragOver}
       onDragLeave={handleDragLeave}
@@ -461,16 +457,17 @@ export default function CADConverterPage() {
               >
                 <Cpu className="w-3 h-3" /> WASM
               </span>
-              <div
-                title={`System Theme: ${theme.toUpperCase()}`}
-                className={`p-1 rounded-md border ${
+              <button
+                onClick={toggleManualTheme}
+                title={`Current Theme: ${theme.toUpperCase()} (Click to toggle)`}
+                className={`p-1.5 rounded-md border transition-colors cursor-pointer ${
                   isDark
-                    ? 'bg-slate-800/80 border-slate-700 text-slate-300'
-                    : 'bg-slate-100 border-slate-200 text-slate-700'
+                    ? 'bg-slate-800/80 border-slate-700 text-slate-300 hover:bg-slate-750'
+                    : 'bg-slate-100 border-slate-200 text-slate-700 hover:bg-slate-200'
                 }`}
               >
-                {isDark ? <Moon className="w-3 h-3" /> : <Sun className="w-3 h-3" />}
-              </div>
+                {isDark ? <Moon className="w-3.5 h-3.5" /> : <Sun className="w-3.5 h-3.5 text-amber-500" />}
+              </button>
             </div>
           </div>
 
