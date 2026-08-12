@@ -5,8 +5,7 @@ import * as THREE from 'three';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 import { STLLoader } from 'three/examples/jsm/loaders/STLLoader.js';
 import { OBJLoader } from 'three/examples/jsm/loaders/OBJLoader.js';
-import { PLYLoader } from 'Lad/examples/jsm/loaders/PLYLoader.js' ? null : null; // Safe fallback
-import { PLYLoader as RealPLYLoader } from 'three/examples/jsm/loaders/PLYLoader.js';
+import { PLYLoader } from 'three/examples/jsm/loaders/PLYLoader.js';
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
 import { ThreeMFLoader } from 'three/examples/jsm/loaders/3MFLoader.js';
 import { FBXLoader } from 'three/examples/jsm/loaders/FBXLoader.js';
@@ -43,7 +42,6 @@ export default function CADConverterPage() {
   const currentMeshRef = useRef<THREE.Object3D | null>(null);
   const occtInstanceRef = useRef<any>(null);
 
-  // Initialize theme directly from system preference
   const [theme, setTheme] = useState<ThemeMode>('dark');
   const [isDragging, setIsDragging] = useState<boolean>(false);
   const [fileName, setFileName] = useState<string>('');
@@ -54,7 +52,7 @@ export default function CADConverterPage() {
   const [glbBlob, setGlbBlob] = useState<Blob | null>(null);
   const [wireframe, setWireframe] = useState<boolean>(false);
 
-  // 1. Detect and Listen to System Theme
+  // Detect and listen to OS color scheme
   useEffect(() => {
     const mediaQuery = window.matchMedia('(prefers-color-scheme: dark)');
     setTheme(mediaQuery.matches ? 'dark' : 'light');
@@ -67,7 +65,7 @@ export default function CADConverterPage() {
     return () => mediaQuery.removeEventListener('change', handleMediaChange);
   }, []);
 
-  // 2. Initialize Three.js Base Canvas
+  // Initialize Three.js Viewport
   useEffect(() => {
     if (!containerRef.current) return;
 
@@ -94,7 +92,6 @@ export default function CADConverterPage() {
     controls.enableDamping = true;
     controls.dampingFactor = 0.05;
 
-    // Lighting Configuration
     const ambientLight = new THREE.AmbientLight(0xffffff, 1.4);
     scene.add(ambientLight);
 
@@ -135,16 +132,14 @@ export default function CADConverterPage() {
     };
   }, []);
 
-  // 3. Reactively Synchronize Viewport Theme (Background & Grid Colors)
+  // Dynamically update viewport colors on theme change
   useEffect(() => {
     if (!sceneRef.current) return;
 
     const isDark = theme === 'dark';
 
-    // Update 3D background color
     sceneRef.current.background = new THREE.Color(isDark ? 0x090d16 : 0xf8fafc);
 
-    // Rebuild reference grid with theme-appropriate colors
     if (gridHelperRef.current) {
       sceneRef.current.remove(gridHelperRef.current);
       gridHelperRef.current.geometry.dispose();
@@ -153,8 +148,8 @@ export default function CADConverterPage() {
     const newGrid = new THREE.GridHelper(
       300,
       30,
-      isDark ? 0x334155 : 0x94a3b8, // Center line color
-      isDark ? 0x1e293b : 0xe2e8f0  // Secondary lines color
+      isDark ? 0x334155 : 0x94a3b8,
+      isDark ? 0x1e293b : 0xe2e8f0
     );
     newGrid.position.y = -0.05;
     gridHelperRef.current = newGrid;
@@ -308,7 +303,7 @@ export default function CADConverterPage() {
         const text = new TextDecoder().decode(arrayBuffer);
         loadedObject = loader.parse(text);
       } else if (ext === 'ply') {
-        const loader = new RealPLYLoader();
+        const loader = new PLYLoader();
         const geometry = loader.parse(arrayBuffer);
         loadedObject = new THREE.Mesh(geometry, defaultMaterial);
       } else if (ext === '3mf') {
@@ -462,7 +457,7 @@ export default function CADConverterPage() {
                 title={`Current Theme: ${theme.toUpperCase()} (Click to toggle)`}
                 className={`p-1.5 rounded-md border transition-colors cursor-pointer ${
                   isDark
-                    ? 'bg-slate-800/80 border-slate-700 text-slate-300 hover:bg-slate-750'
+                    ? 'bg-slate-800/80 border-slate-700 text-slate-300 hover:bg-slate-700'
                     : 'bg-slate-100 border-slate-200 text-slate-700 hover:bg-slate-200'
                 }`}
               >
